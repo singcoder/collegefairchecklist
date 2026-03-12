@@ -1,0 +1,59 @@
+================================================================================
+FIX: "x86_64 emulation requires hardware acceleration" / Hypervisor not installed
+================================================================================
+
+You already enabled Virtual Machine Platform + Windows Hypervisor Platform.
+If the emulator still says "hypervisor driver is not installed", try below.
+
+--------------------------------------------------------------------------------
+NEXT: Try full Hyper-V (so WHPX is actually used by the emulator)
+--------------------------------------------------------------------------------
+
+Sometimes the emulator only uses WHPX when the Hyper-V *role* is present.
+
+1. Win + R → optionalfeatures → Enter.
+2. Turn ON the main **Hyper-V** checkbox (parent; includes "Hyper-V Platform" etc).
+3. Click OK, restart.
+4. Run create_avd_and_run.bat again.
+
+If you use VirtualBox, VMware, or similar, Hyper-V can conflict — skip to
+"Install AEHD" below and disable the two WHPX-related features first.
+
+--------------------------------------------------------------------------------
+OR: Install Android Emulator Hypervisor Driver (AEHD) — use when WHPX doesn't work
+--------------------------------------------------------------------------------
+
+AEHD works *instead of* WHPX. It requires Hyper-V to be OFF.
+
+1. Win + R → optionalfeatures → Enter.
+2. Turn OFF: Hyper-V, and (if you want) Virtual Machine Platform /
+   Windows Hypervisor Platform. Click OK, restart.
+3. Download AEHD: https://github.com/google/android-emulator-hypervisor-driver/releases
+   Get the latest "android-emulator-hypervisor-driver-...-windows.msi".
+4. Right-click the .msi → Run as administrator. Complete install. Restart.
+5. Run create_avd_and_run.bat again.
+
+--------------------------------------------------------------------------------
+RUN WITHOUT ACCELERATION (no driver, slower but works)
+--------------------------------------------------------------------------------
+
+Use the arm64 AVD so you don't need any hypervisor:
+   create_avd_and_run_arm64.bat
+
+First run installs the arm64 system image and creates the AVD; then starts the
+emulator. It's slower than x86_64 but runs on any PC.
+
+--------------------------------------------------------------------------------
+STEP 3 — If still failing: Check BIOS virtualization
+--------------------------------------------------------------------------------
+
+- Intel: enable "VT-x" or "Intel Virtualization Technology".
+- AMD: enable "SVM" or "AMD-V".
+
+Restart into BIOS/UEFI (e.g. F2, Del, or F12 at boot), find CPU/Security
+or Virtualization, enable it, save and exit.
+
+--------------------------------------------------------------------------------
+Quick link (open Windows Features):
+   Win + R → optionalfeatures → Enter
+================================================================================

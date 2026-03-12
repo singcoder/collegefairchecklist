@@ -1,0 +1,31 @@
+name: college_fair_checklist
+description: College Fair Checklist — pick a fair, complete checklists by group (checkboxes and notes). Uses Supabase.
+version: 1.0.0+5
+publish_to: "none"
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Supabase (auth + database)
+  supabase_flutter: ^2.0.0
+
+  # Open URLs in the phone browser
+  url_launcher: ^6.3.0
+
+  # Persist saved login email
+  shared_preferences: ^2.2.2
+
+  # Standard Flutter icons
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
