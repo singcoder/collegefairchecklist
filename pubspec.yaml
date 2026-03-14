@@ -1,6 +1,6 @@
 name: college_fair_checklist
 description: College Fair Checklist — pick a fair, complete checklists by group (checkboxes and notes). Uses Supabase.
-version: 1.0.0+5
+version: 1.0.1+6
 publish_to: "none"
 
 environment:
