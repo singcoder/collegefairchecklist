@@ -322,7 +322,7 @@ class _EmailCodeSignInScreenState extends State<EmailCodeSignInScreen> {
   }
 }
 
-// --- College fair & checklist data (new Supabase schema) ---
+// --- Data models (fair → colleges → user_college_data) ---
 
 class CollegeFair {
   CollegeFair({required this.id, required this.name, required this.fairDate});
@@ -339,51 +339,73 @@ class CollegeFair {
   }
 }
 
-class ChecklistGroup {
-  ChecklistGroup({required this.id, required this.collegeFairId, required this.title, required this.sortOrder});
-  final String id;
-  final String collegeFairId;
-  final String title;
-  final int sortOrder;
-  static ChecklistGroup fromMap(Map<String, dynamic> m) {
-    return ChecklistGroup(
-      id: m['id'] as String,
-      collegeFairId: m['college_fair_id'] as String,
-      title: m['title'] as String? ?? '',
-      sortOrder: (m['sort_order'] as num?)?.toInt() ?? 0,
-    );
-  }
-}
-
-class ChecklistItem {
-  ChecklistItem({
+class College {
+  College({
     required this.id,
-    required this.groupId,
-    required this.label,
-    required this.itemType,
-    required this.sortOrder,
-    this.url,
+    required this.collegeFairId,
+    required this.name,
+    this.website,
+    this.description,
+    this.contactName,
+    this.email,
+    this.sortOrder = 0,
   });
   final String id;
-  final String groupId;
-  final String label;
-  final String itemType; // 'checkbox' | 'text'
+  final String collegeFairId;
+  final String name;
+  final String? website;
+  final String? description;
+  final String? contactName;
+  final String? email;
   final int sortOrder;
-  final String? url;
-  bool get isCheckbox => itemType == 'checkbox';
-  static ChecklistItem fromMap(Map<String, dynamic> m) {
-    return ChecklistItem(
+  static College fromMap(Map<String, dynamic> m) {
+    return College(
       id: m['id'] as String,
-      groupId: m['group_id'] as String,
-      label: m['label'] as String? ?? '',
-      itemType: m['item_type'] as String? ?? 'checkbox',
+      collegeFairId: m['college_fair_id'] as String,
+      name: m['name'] as String? ?? '',
+      website: m['website'] as String?,
+      description: m['description'] as String?,
+      contactName: m['contact_name'] as String?,
+      email: m['email'] as String?,
       sortOrder: (m['sort_order'] as num?)?.toInt() ?? 0,
-      url: m['url'] as String?,
     );
   }
 }
 
-/// Shows college fair dropdown and two-level checklist (groups → items; checkbox or text).
+class UserCollegeData {
+  UserCollegeData({
+    required this.collegeId,
+    this.gpa,
+    this.sat,
+    this.act,
+    this.apScoresAccepted,
+    this.majors,
+    this.housing,
+    this.scholarships,
+  });
+  final String collegeId;
+  final String? gpa;
+  final String? sat;
+  final String? act;
+  final String? apScoresAccepted;
+  final String? majors;
+  final String? housing;
+  final String? scholarships;
+  static UserCollegeData fromMap(Map<String, dynamic> m) {
+    return UserCollegeData(
+      collegeId: m['college_id'] as String,
+      gpa: m['gpa'] as String?,
+      sat: m['sat'] as String?,
+      act: m['act'] as String?,
+      apScoresAccepted: m['ap_scores_accepted'] as String?,
+      majors: m['majors'] as String?,
+      housing: m['housing'] as String?,
+      scholarships: m['scholarships'] as String?,
+    );
+  }
+}
+
+/// Main screen: fair dropdown, then open search box for colleges; when selected, fields appear below.
 class ChecklistScreen extends StatefulWidget {
   const ChecklistScreen({super.key});
 
@@ -394,26 +416,31 @@ class ChecklistScreen extends StatefulWidget {
 class _ChecklistScreenState extends State<ChecklistScreen> {
   List<CollegeFair> _fairs = [];
   String? _selectedFairId;
-  List<ChecklistGroup> _groups = [];
-  List<ChecklistItem> _items = [];
-  Map<String, bool> _completionMap = {};
-  Map<String, String> _textValueMap = {};
-  final Set<String> _expandedGroupIds = {};
+  List<College> _colleges = [];
+  College? _selectedCollege;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  UserCollegeData? _collegeData;
   bool _loading = true;
+  bool _dataLoading = false;
   String? _error;
-
-  static const List<Color> _groupBarColors = [
-    Color(0xFF1976D2), // blue
-    Color(0xFF00897B), // teal
-    Color(0xFF5E35B1), // deep purple
-    Color(0xFFE65100), // deep orange
-    Color(0xFF00695C), // teal dark
-  ];
 
   @override
   void initState() {
     super.initState();
     _loadFairs();
+    _searchController.addListener(() => setState(() => _searchQuery = _searchController.text.trim().toLowerCase()));
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<College> get _filteredColleges {
+    if (_searchQuery.isEmpty) return _colleges;
+    return _colleges.where((c) => c.name.toLowerCase().contains(_searchQuery)).toList();
   }
 
   Future<void> _loadFairs() async {
@@ -422,9 +449,7 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
       _error = null;
     });
     final client = Supabase.instance.client;
-    final user = client.auth.currentUser;
-    if (user == null) return;
-
+    if (client.auth.currentUser == null) return;
     try {
       final res = await client.from('college_fairs').select().order('fair_date', ascending: false);
       final list = List<Map<String, dynamic>>.from(res as List);
@@ -437,7 +462,7 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
           _selectedFairId = selected;
           _loading = false;
         });
-        if (selected != null) _loadChecklistForFair(selected);
+        if (selected != null) _loadCollegesForFair(selected);
       }
     } catch (e) {
       if (mounted) {
@@ -449,60 +474,22 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
     }
   }
 
-  Future<void> _loadChecklistForFair(String collegeFairId) async {
-    setState(() {
-      _groups = [];
-      _items = [];
-      _completionMap = {};
-      _textValueMap = {};
-      _expandedGroupIds.clear();
-    });
+  Future<void> _loadCollegesForFair(String collegeFairId) async {
     final client = Supabase.instance.client;
-    final user = client.auth.currentUser;
-    if (user == null) return;
-
     try {
-      final groupsRes = await client
-          .from('checklist_groups')
+      final res = await client
+          .from('colleges')
           .select()
           .eq('college_fair_id', collegeFairId)
           .order('sort_order');
-      final groupsList = List<Map<String, dynamic>>.from(groupsRes as List);
-      final groups = groupsList.map(ChecklistGroup.fromMap).toList();
-      if (groups.isEmpty) {
-        if (mounted) setState(() {});
-        return;
-      }
-      final groupIds = groups.map((g) => g.id).toList();
-      final itemsRes = await client
-          .from('checklist_items')
-          .select()
-          .inFilter('group_id', groupIds)
-          .order('sort_order');
-      final itemsList = List<Map<String, dynamic>>.from(itemsRes as List);
-      final items = itemsList.map(ChecklistItem.fromMap).toList();
-      final itemIds = items.map((e) => e.id).toList();
-      final ucRes = await client
-          .from('user_checklist')
-          .select('item_id, is_complete, text_value')
-          .eq('user_id', user.id)
-          .inFilter('item_id', itemIds);
-      final completionMap = <String, bool>{};
-      final textValueMap = <String, String>{};
-      for (final row in ucRes as List) {
-        final map = row as Map<String, dynamic>;
-        final itemId = map['item_id'] as String?;
-        if (itemId == null) continue;
-        if (map['is_complete'] != null) completionMap[itemId] = map['is_complete'] == true;
-        final tv = map['text_value'] as String?;
-        if (tv != null) textValueMap[itemId] = tv;
-      }
+      final list = List<Map<String, dynamic>>.from(res as List);
+      final colleges = list.map(College.fromMap).toList();
       if (mounted) {
         setState(() {
-          _groups = groups;
-          _items = items;
-          _completionMap = completionMap;
-          _textValueMap = textValueMap;
+          _colleges = colleges;
+          _selectedCollege = null;
+          _collegeData = null;
+          _searchController.clear();
         });
       }
     } catch (e) {
@@ -510,39 +497,78 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
     }
   }
 
-  Future<void> _updateCheckbox(String itemId, bool isComplete) async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    setState(() => _completionMap[itemId] = isComplete);
-    await Supabase.instance.client.from('user_checklist').upsert({
-      'user_id': user.id,
-      'item_id': itemId,
-      'is_complete': isComplete,
-      'text_value': null,
-      'completed_at': isComplete ? DateTime.now().toIso8601String() : null,
-      'updated_at': DateTime.now().toIso8601String(),
-    }, onConflict: 'user_id,item_id');
+  Future<void> _selectCollege(College college) async {
+    setState(() {
+      _selectedCollege = college;
+      _searchController.text = college.name;
+      _searchQuery = college.name.toLowerCase();
+    });
+    await _loadCollegeData();
   }
 
-  Future<void> _updateTextValue(String itemId, String textValue) async {
+  void _clearCollege() {
+    setState(() {
+      _selectedCollege = null;
+      _collegeData = null;
+      _searchController.clear();
+      _searchQuery = '';
+    });
+  }
+
+  Future<void> _loadCollegeData() async {
+    final college = _selectedCollege;
+    if (college == null) return;
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
-    setState(() => _textValueMap[itemId] = textValue);
-    await Supabase.instance.client.from('user_checklist').upsert({
+    setState(() => _dataLoading = true);
+    try {
+      final res = await Supabase.instance.client
+          .from('user_college_data')
+          .select()
+          .eq('user_id', user.id)
+          .eq('college_id', college.id)
+          .maybeSingle();
+      if (mounted) {
+        setState(() {
+          _collegeData = res == null ? UserCollegeData(collegeId: college.id) : UserCollegeData.fromMap(res as Map<String, dynamic>);
+          _dataLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() {
+        _error = e.toString();
+        _dataLoading = false;
+      });
+    }
+  }
+
+  Future<void> _saveField(String field, String? value) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    final college = _selectedCollege;
+    if (user == null || college == null) return;
+    final payload = <String, dynamic>{
       'user_id': user.id,
-      'item_id': itemId,
-      'is_complete': null,
-      'text_value': textValue.isEmpty ? null : textValue,
+      'college_id': college.id,
       'updated_at': DateTime.now().toIso8601String(),
-    }, onConflict: 'user_id,item_id');
+    };
+    payload[field] = value?.trim().isEmpty ?? true ? null : value?.trim();
+    if (_collegeData != null) {
+      payload['gpa'] = payload['gpa'] ?? _collegeData!.gpa;
+      payload['sat'] = payload['sat'] ?? _collegeData!.sat;
+      payload['act'] = payload['act'] ?? _collegeData!.act;
+      payload['ap_scores_accepted'] = payload['ap_scores_accepted'] ?? _collegeData!.apScoresAccepted;
+      payload['majors'] = payload['majors'] ?? _collegeData!.majors;
+      payload['housing'] = payload['housing'] ?? _collegeData!.housing;
+      payload['scholarships'] = payload['scholarships'] ?? _collegeData!.scholarships;
+    }
+    await Supabase.instance.client.from('user_college_data').upsert(payload, onConflict: 'user_id,college_id');
+    if (mounted) _loadCollegeData();
   }
 
   static Future<void> _openUrl(String url) async {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return;
-    final urlWithScheme = trimmed.contains(RegExp(r'^https?://', caseSensitive: false))
-        ? trimmed
-        : 'https://$trimmed';
+    final urlWithScheme = trimmed.contains(RegExp(r'^https?://', caseSensitive: false)) ? trimmed : 'https://$trimmed';
     final uri = Uri.tryParse(urlWithScheme);
     if (uri == null || !uri.hasScheme) return;
     try {
@@ -550,12 +576,14 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
     } catch (_) {}
   }
 
+  static String _formatDate(DateTime d) {
+    return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading && _fairs.isEmpty) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (_error != null && _fairs.isEmpty) {
       return Scaffold(
@@ -563,6 +591,9 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
         body: Center(child: Text('Error: $_error')),
       );
     }
+    final c = _selectedCollege;
+    final d = _collegeData;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('College Fair Checklist'),
@@ -578,25 +609,56 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             child: DropdownButtonFormField<String>(
               value: _selectedFairId,
+              isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'College fair',
                 border: OutlineInputBorder(),
               ),
+              selectedItemBuilder: (context) => _fairs
+                  .map((f) => Text(
+                        '${f.name} — ${_formatDate(f.fairDate)}',
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ))
+                  .toList(),
               items: _fairs
                   .map((f) => DropdownMenuItem<String>(
                         value: f.id,
-                        child: Text('${f.name} — ${_formatDate(f.fairDate)}'),
+                        child: Text(
+                          '${f.name} — ${_formatDate(f.fairDate)}',
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
                       ))
                   .toList(),
               onChanged: (id) {
                 if (id != null) {
                   setState(() => _selectedFairId = id);
-                  _loadChecklistForFair(id);
+                  _loadCollegesForFair(id);
                 }
               },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search colleges...',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: c != null
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: _clearCollege,
+                        tooltip: 'Change college',
+                      )
+                    : null,
+                border: const OutlineInputBorder(),
+                isDense: true,
+              ),
             ),
           ),
           if (_error != null && _fairs.isNotEmpty)
@@ -610,162 +672,104 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
                     child: Padding(
                       padding: EdgeInsets.all(24),
                       child: Text(
-                        'No college fairs yet. Add rows to college_fairs in your Supabase project.',
+                        'No college fairs yet. Add college_fairs and colleges in Supabase.',
                         textAlign: TextAlign.center,
                       ),
                     ),
                   )
-                : _groups.isEmpty
+                : _colleges.isEmpty
                     ? const Center(
                         child: Padding(
                           padding: EdgeInsets.all(24),
                           child: Text(
-                            'No checklist groups for this fair. Add groups and items in Supabase.',
+                            'No colleges for this fair. Add colleges in Supabase.',
                             textAlign: TextAlign.center,
                           ),
                         ),
                       )
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 24),
-                        itemCount: _groups.length,
-                        itemBuilder: (context, index) {
-                          final group = _groups[index];
-                          final groupItems = _items.where((i) => i.groupId == group.id).toList()
-                            ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
-                          final isExpanded = _expandedGroupIds.contains(group.id);
-                          final barColor = _groupBarColors[index % _groupBarColors.length];
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: () {
-                                    setState(() {
-                                      if (isExpanded) {
-                                        _expandedGroupIds.remove(group.id);
-                                      } else {
-                                        _expandedGroupIds.add(group.id);
-                                      }
-                                    });
-                                  },
-                                  child: Container(
-                                    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                    decoration: BoxDecoration(
-                                      color: barColor.withOpacity(0.15),
-                                      border: Border.all(color: barColor, width: 3),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            group.title,
-                                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                                  fontWeight: FontWeight.bold,
-                                                  color: barColor,
-                                                ),
-                                          ),
+                    : c == null
+                        ? ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            itemCount: _filteredColleges.length,
+                            itemBuilder: (context, index) {
+                              final college = _filteredColleges[index];
+                              return ListTile(
+                                title: Text(college.name),
+                                onTap: () => _selectCollege(college),
+                              );
+                            },
+                          )
+                        : _dataLoading
+                            ? const Center(child: CircularProgressIndicator())
+                            : SingleChildScrollView(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    // Read-only: website, description, contact, email
+                                    if (c.website != null && c.website!.trim().isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 8),
+                                        child: InkWell(
+                                          onTap: () => _openUrl(c.website!),
+                                          child: Text('Website: ${c.website}', style: const TextStyle(decoration: TextDecoration.underline, color: Colors.blue)),
                                         ),
-                                        Icon(
-                                          isExpanded ? Icons.expand_less : Icons.expand_more,
-                                          color: barColor,
-                                          size: 28,
-                                        ),
-                                      ],
+                                      ),
+                                    if (c.description != null && c.description!.trim().isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 8),
+                                        child: Text(c.description!, style: Theme.of(context).textTheme.bodyMedium),
+                                      ),
+                                    if (c.contactName != null && c.contactName!.trim().isNotEmpty)
+                                      Padding(padding: const EdgeInsets.only(bottom: 4), child: Text('Contact: ${c.contactName!}', style: Theme.of(context).textTheme.bodyMedium)),
+                                    if (c.email != null && c.email!.trim().isNotEmpty)
+                                      Padding(padding: const EdgeInsets.only(bottom: 16), child: Text('Email: ${c.email!}', style: Theme.of(context).textTheme.bodyMedium)),
+                                    const Divider(),
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 8, bottom: 8),
+                                      child: Text('Academic Requirements', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                                     ),
-                                  ),
+                                    _EditableField(label: 'GPA', value: d?.gpa ?? '', onSave: (v) => _saveField('gpa', v)),
+                                    _EditableField(label: 'SAT', value: d?.sat ?? '', onSave: (v) => _saveField('sat', v)),
+                                    _EditableField(label: 'ACT', value: d?.act ?? '', onSave: (v) => _saveField('act', v)),
+                                    _EditableField(label: 'AP scores accepted', value: d?.apScoresAccepted ?? '', onSave: (v) => _saveField('ap_scores_accepted', v)),
+                                    const Divider(),
+                                    _EditableField(label: 'Majors', value: d?.majors ?? '', onSave: (v) => _saveField('majors', v)),
+                                    _EditableField(label: 'Housing', value: d?.housing ?? '', onSave: (v) => _saveField('housing', v)),
+                                    _EditableField(label: 'Scholarships', value: d?.scholarships ?? '', onSave: (v) => _saveField('scholarships', v)),
+                                  ],
                                 ),
                               ),
-                              if (isExpanded)
-                                ...groupItems.map((item) => _buildItem(context, item)),
-                            ],
-                          );
-                        },
-                      ),
           ),
         ],
       ),
     );
   }
-
-  Widget _buildItem(BuildContext context, ChecklistItem item) {
-    if (item.isCheckbox) {
-      final isComplete = _completionMap[item.id] ?? false;
-      return Card(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: ListTile(
-          leading: Checkbox(
-            value: isComplete,
-            onChanged: (value) {
-              if (value != null) _updateCheckbox(item.id, value);
-            },
-          ),
-          title: item.url != null && item.url!.trim().isNotEmpty
-              ? InkWell(
-                  onTap: () => _openUrl(item.url!),
-                  child: Text(
-                    item.label,
-                    style: const TextStyle(
-                      decoration: TextDecoration.underline,
-                      decorationColor: Colors.blue,
-                    ),
-                  ),
-                )
-              : Text(item.label),
-        ),
-      );
-    }
-    final textValue = _textValueMap[item.id] ?? '';
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: _TextItemField(
-        itemId: item.id,
-        label: item.label,
-        initialValue: textValue,
-        onSaved: _updateTextValue,
-      ),
-    );
-  }
-
-  static String _formatDate(DateTime d) {
-    return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-  }
 }
 
-/// Text field checklist item with stable controller.
-class _TextItemField extends StatefulWidget {
-  const _TextItemField({
-    required this.itemId,
-    required this.label,
-    required this.initialValue,
-    required this.onSaved,
-  });
-  final String itemId;
+class _EditableField extends StatefulWidget {
+  const _EditableField({required this.label, required this.value, required this.onSave});
   final String label;
-  final String initialValue;
-  final void Function(String itemId, String value) onSaved;
+  final String value;
+  final void Function(String value) onSave;
 
   @override
-  State<_TextItemField> createState() => _TextItemFieldState();
+  State<_EditableField> createState() => _EditableFieldState();
 }
 
-class _TextItemFieldState extends State<_TextItemField> {
-  late final TextEditingController _controller;
+class _EditableFieldState extends State<_EditableField> {
+  late TextEditingController _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.initialValue);
+    _controller = TextEditingController(text: widget.value);
   }
 
   @override
-  void didUpdateWidget(_TextItemField oldWidget) {
+  void didUpdateWidget(_EditableField oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.itemId != widget.itemId || oldWidget.initialValue != widget.initialValue) {
-      _controller.text = widget.initialValue;
-    }
+    if (oldWidget.value != widget.value && _controller.text != widget.value) _controller.text = widget.value;
   }
 
   @override
@@ -777,23 +781,16 @@ class _TextItemFieldState extends State<_TextItemField> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            widget.label,
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(height: 8),
+          Text(widget.label, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
           TextField(
             controller: _controller,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: 'Enter text...',
-              isDense: true,
-            ),
-            onChanged: (value) => widget.onSaved(widget.itemId, value),
+            decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+            onChanged: (v) => widget.onSave(v),
           ),
         ],
       ),

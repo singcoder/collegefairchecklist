@@ -48,3 +48,6 @@ app.*.map.json
 node_modules/
 **/node_modules/
 functions/node_modules/
+
+# SQL (schema/seed scripts – often env-specific or contain local data)
+*.sql
