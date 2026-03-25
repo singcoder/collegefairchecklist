@@ -1,44 +1,50 @@
-# Supabase setup (College & Career Checklist)
+# Supabase setup (Career Fair Checklist)
 
-## 1. Paste your anon key in the app
+## 1. API keys
 
-Open `lib/supabase_config.dart` and replace `PASTE_YOUR_ANON_KEY_HERE` with your project's **anon public** key (Supabase Dashboard → Project Settings → API).
+Open `lib/supabase_config.dart` and set `supabaseUrl` and `supabaseAnonKey` (Dashboard → Project Settings → API).
 
-## 2. Run the schema
+## 2. Schema
 
-In Supabase Dashboard → **SQL Editor** → New query, paste the contents of `schema.sql` and click **Run**. This creates the `checklist_items` and `user_checklist` tables and RLS policies.
+In **SQL Editor**, run `schema.sql`. It creates:
 
-## 3. Use 6-digit code in the email (not a separate “OTP” setting)
+- `fairs` — events (one fair has many programs)
+- `program_types` — reusable categories (e.g. four-year college, apprenticeship); add or change anytime
+- `question_sections` — optional group titles under a program type (`title`, `sort_order`). Questions link via `questions.section_id`; **leave `section_id` null** for questions that should appear **without** a section header (shown first, before titled sections).
+- `questions` — rows per program type (`label`, `sort_order`, `type`, optional `section_id`); each appears in the app with the appropriate control
+- `programs` — booth/row at a fair (`fair_id`, `program_type_id`, optional website/contact fields)
+- `user_program_answers` — one row per user + program + question (answer text)
 
-There is **no separate “Enable OTP”** toggle. The same `signInWithOtp` call sends either a **magic link** or a **6-digit code** depending on the **email template**.
+Row Level Security policies are included: authenticated users can read reference tables; users can only read/write their own answers.
 
-To send a **6-digit code**:
+If you still have legacy `college_fairs` / `colleges` / `user_college_data` tables, back them up, then drop or rename them before applying the new schema (or use a fresh project).
 
-1. In Supabase Dashboard go to **Authentication** → **Email Templates** (left sidebar under Auth).
-2. Open the **Magic Link** template.
-3. Change the **Subject** and **Body** so the email shows the code instead of (or as well as) the link. For example:
+## 3. Email login code
 
-   **Subject:** `Your login code`
+See the main project README or earlier notes: configure the **Magic Link** email template so `{{ .Token }}` shows the verification code.
 
-   **Body (HTML):**
-   ```html
-   <h2>Your login code</h2>
-   <p>Enter this code in the app:</p>
-   <p><strong>{{ .Token }}</strong></p>
-   <p>It expires in a short time.</p>
-   ```
+## 4. Example seed (optional)
 
-4. Save. The `{{ .Token }}` variable is the 6-digit code. After this, when users tap “Send verification code”, they’ll get this code in the email to type into the app.
-
-## 4. Add checklist items (optional)
-
-To see items in the app, insert rows into `checklist_items` via SQL Editor or Table Editor, for example:
+After `schema.sql`, you can insert types, questions, a fair, and programs (adjust UUIDs or use `default`):
 
 ```sql
-insert into public.checklist_items (id, checklist_id, title, url, sort_order)
-values
-  ('item-1', 'global', 'First item', 'https://example.com', 0),
-  ('item-2', 'global', 'Second item', null, 1);
+insert into public.program_types (name, sort_order) values
+  ('Four-year college', 0),
+  ('Apprenticeship', 1);
+
+-- Assume IDs returned; replace with your UUIDs from program_types:
+insert into public.questions (program_type_id, label, sort_order)
+select id, 'Minimum GPA?', 0 from public.program_types where name = 'Four-year college'
+union all
+select id, 'Scholarships offered?', 1 from public.program_types where name = 'Four-year college';
+
+insert into public.fairs (name, fair_date) values ('Spring career fair', '2026-04-15');
+
+insert into public.programs (fair_id, program_type_id, name, sort_order)
+select f.id, pt.id, 'Example University', 0
+from public.fairs f
+cross join public.program_types pt
+where f.name = 'Spring career fair' and pt.name = 'Four-year college';
 ```
 
 ## 5. Run the app
@@ -47,5 +53,3 @@ values
 flutter pub get
 flutter run
 ```
-
-Sign in with your email → send code → enter the 6-digit code from the email → you should see the checklist (or "No checklist items" until you add rows).
