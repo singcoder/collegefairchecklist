@@ -622,6 +622,12 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
     final program = _selectedProgram;
     if (user == null || program == null) return;
     final trimmed = value?.trim();
+    final stored = trimmed == null || trimmed.isEmpty ? '' : trimmed;
+    // Keep local state in sync immediately so parent rebuilds don't clobber the TextField
+    // mid-keystroke (reload-after-save caused iOS "every other character" glitches).
+    if (mounted) {
+      setState(() => _answers[questionId] = stored);
+    }
     final payload = <String, dynamic>{
       'user_id': user.id,
       'program_id': program.id,
@@ -629,8 +635,11 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
       'answer_text': trimmed == null || trimmed.isEmpty ? null : trimmed,
       'updated_at': DateTime.now().toIso8601String(),
     };
-    await Supabase.instance.client.from('user_program_answers').upsert(payload, onConflict: 'user_id,program_id,question_id');
-    if (mounted) _loadQuestionsAndAnswersForProgram(showLoading: false);
+    try {
+      await Supabase.instance.client.from('user_program_answers').upsert(payload, onConflict: 'user_id,program_id,question_id');
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
   }
 
   static Future<void> _openUrl(String url) async {
@@ -958,6 +967,7 @@ class _QuestionAnswerField extends StatefulWidget {
 
 class _QuestionAnswerFieldState extends State<_QuestionAnswerField> {
   late TextEditingController _controller;
+  final FocusNode _focusNode = FocusNode();
 
   @override
   void initState() {
@@ -968,15 +978,17 @@ class _QuestionAnswerFieldState extends State<_QuestionAnswerField> {
   @override
   void didUpdateWidget(_QuestionAnswerField oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.question.inputType != QuestionInputType.boolean &&
-        oldWidget.value != widget.value &&
-        _controller.text != widget.value) {
+    if (widget.question.inputType == QuestionInputType.boolean) return;
+    // While typing, ignore parent value sync (avoids race with async saves / rebuilds).
+    if (_focusNode.hasFocus) return;
+    if (oldWidget.value != widget.value && _controller.text != widget.value) {
       _controller.text = widget.value;
     }
   }
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -1028,6 +1040,7 @@ class _QuestionAnswerFieldState extends State<_QuestionAnswerField> {
               const SizedBox(height: 4),
               TextField(
                 controller: _controller,
+                focusNode: _focusNode,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: false),
                 inputFormatters: [_DecimalTextInputFormatter()],
                 decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
@@ -1046,6 +1059,7 @@ class _QuestionAnswerFieldState extends State<_QuestionAnswerField> {
               const SizedBox(height: 4),
               TextField(
                 controller: _controller,
+                focusNode: _focusNode,
                 decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
                 onChanged: (v) => widget.onSave(v),
               ),
