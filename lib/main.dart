@@ -385,11 +385,13 @@ class Program {
   }
 }
 
-/// Matches `questions.type` in Supabase: text | number | boolean
+/// Matches `questions.type` in Supabase: text | number | boolean | date | money
 enum QuestionInputType {
   text,
   number,
   boolean,
+  date,
+  money,
 }
 
 QuestionInputType _questionInputTypeFromDb(String? raw) {
@@ -398,9 +400,41 @@ QuestionInputType _questionInputTypeFromDb(String? raw) {
       return QuestionInputType.number;
     case 'boolean':
       return QuestionInputType.boolean;
+    case 'date':
+      return QuestionInputType.date;
+    case 'money':
+      return QuestionInputType.money;
     default:
       return QuestionInputType.text;
   }
+}
+
+/// Stored [answer_text] for date questions: calendar date only as `yyyy-MM-dd` (no time, no timezone).
+String _dateToIsoDateOnly(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+/// Interprets [raw] as a **local calendar date** only — never uses a time-of-day (avoids UTC shifts).
+DateTime? _parseStoredDate(String raw) {
+  final t = raw.trim();
+  if (t.isEmpty) return null;
+  final m = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(t);
+  if (m == null) return null;
+  final y = int.tryParse(m.group(1)!);
+  final mo = int.tryParse(m.group(2)!);
+  final d = int.tryParse(m.group(3)!);
+  if (y == null || mo == null || d == null) return null;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  try {
+    return DateTime(y, mo, d);
+  } on ArgumentError {
+    return null;
+  }
+}
+
+String _formatDateDisplay(BuildContext context, String stored) {
+  final d = _parseStoredDate(stored);
+  if (d == null) return 'Select a date';
+  return MaterialLocalizations.of(context).formatFullDate(d);
 }
 
 class Question {
@@ -978,7 +1012,10 @@ class _QuestionAnswerFieldState extends State<_QuestionAnswerField> {
   @override
   void didUpdateWidget(_QuestionAnswerField oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.question.inputType == QuestionInputType.boolean) return;
+    if (widget.question.inputType == QuestionInputType.boolean ||
+        widget.question.inputType == QuestionInputType.date) {
+      return;
+    }
     // While typing, ignore parent value sync (avoids race with async saves / rebuilds).
     if (_focusNode.hasFocus) return;
     if (oldWidget.value != widget.value && _controller.text != widget.value) {
@@ -1044,6 +1081,69 @@ class _QuestionAnswerFieldState extends State<_QuestionAnswerField> {
                 keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: false),
                 inputFormatters: [_DecimalTextInputFormatter()],
                 decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                onChanged: (v) => widget.onSave(v),
+              ),
+            ],
+          ),
+        );
+      case QuestionInputType.date:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              InkWell(
+                onTap: () async {
+                  final now = DateTime.now();
+                  final initial = _parseStoredDate(widget.value) ?? now;
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: initial,
+                    firstDate: DateTime(1900),
+                    lastDate: DateTime(2100),
+                  );
+                  if (picked != null && context.mounted) {
+                    widget.onSave(_dateToIsoDateOnly(picked));
+                  }
+                },
+                borderRadius: BorderRadius.circular(4),
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                    suffixIcon: Icon(Icons.calendar_today, size: 20),
+                  ),
+                  child: Text(
+                    _formatDateDisplay(context, widget.value),
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: widget.value.trim().isEmpty ? Theme.of(context).hintColor : null,
+                        ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      case QuestionInputType.money:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: false),
+                inputFormatters: [_DecimalTextInputFormatter()],
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  prefixText: r'$ ',
+                ),
                 onChanged: (v) => widget.onSave(v),
               ),
             ],

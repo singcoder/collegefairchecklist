@@ -11,7 +11,7 @@ In **SQL Editor**, run `schema.sql`. It creates:
 - `fairs` — events (one fair has many programs)
 - `program_types` — reusable categories (e.g. four-year college, apprenticeship); add or change anytime
 - `question_sections` — optional group titles under a program type (`title`, `sort_order`). Questions link via `questions.section_id`; **leave `section_id` null** for questions that should appear **without** a section header (shown first, before titled sections).
-- `questions` — rows per program type (`label`, `sort_order`, `type`, optional `section_id`); each appears in the app with the appropriate control
+- `questions` — rows per program type (`label`, `sort_order`, `type`, optional `section_id`). Column **`type`** drives the control: `text`, `number`, `boolean`, `date` (calendar date stored in `answer_text` as `yyyy-MM-dd`), `money` (decimal text in `answer_text`). Unknown values are treated as `text`.
 - `programs` — booth/row at a fair (`fair_id`, `program_type_id`, optional website/contact fields)
 - `user_program_answers` — one row per user + program + question (answer text)
 
